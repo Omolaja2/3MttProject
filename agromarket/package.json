@@ -1,0 +1,17 @@
+{
+  "name": "agromarket",
+  "version": "1.0.0",
+  "description": "Produce Marketplace App - farmers list produce, buyers search and order.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --no-warnings server.js",
+    "dev": "node --no-warnings --watch server.js",
+    "seed": "node --no-warnings db.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
