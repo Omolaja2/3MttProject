@@ -2,7 +2,8 @@
 
 AgroMarket - Fresh Farm Produce Marketplace
 
-Frontend wired to the Express + SQLite backend (see server.js / db.js).
+Static demo build: all product, farmer and order data is stored locally
+in the browser (localStorage) so the site runs anywhere with no backend.
 
 */
 
@@ -110,18 +111,6 @@ function esc(s) {
         .replace(/'/g, '&#39;');
 }
 
-/* ===== API ===== */
-async function api(path, options = {}) {
-    const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-    const token = localStorage.getItem(STORAGE.token);
-    if (token) headers.Authorization = 'Bearer ' + token;
-
-    const res = await fetch('/api' + path, { ...options, headers });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'Something went wrong on the server.');
-    return data;
-}
-
 /* ===== Product image helpers ===== */
 const IMG = {
     tomato:   { ill: 'ill-tomato',   cls: 'pimg-tomato' },
@@ -225,28 +214,12 @@ function productCard(p) {
 
 function loadProducts() {
     productGrid.classList.add('loading');
-    const q = new URLSearchParams();
-    if (state.filter.search)    q.set('search', state.filter.search);
-    if (state.filter.category)  q.set('category', state.filter.category);
-    if (state.filter.location)  q.set('location', state.filter.location);
-    const qs = q.toString() ? '?' + q.toString() : '';
-
-    api('/products' + qs)
-        .then(data => {
-            state.products = data;
-            renderProducts();
-            if (dashboardView && !dashboardView.hidden && state.user) {
-                refreshDashboardData();
-            }
-        })
-        .catch(() => {
-            state.products = applyLocalFilter(FALLBACK_PRODUCTS);
-            renderProducts();
-            if (dashboardView && !dashboardView.hidden && state.user) {
-                refreshDashboardData();
-            }
-        })
-        .finally(() => productGrid.classList.remove('loading'));
+    state.products = applyLocalFilter(FALLBACK_PRODUCTS);
+    renderProducts();
+    if (dashboardView && !dashboardView.hidden && state.user) {
+        refreshDashboardData();
+    }
+    productGrid.classList.remove('loading');
 }
 
 /* ===== Search ===== */
@@ -279,35 +252,17 @@ document.querySelectorAll('.search-popular .chip').forEach(chip => {
 
 /* ===== Category & location filters ===== */
 function loadFilters() {
-    api('/categories')
-        .then(cats => {
-            state.categories = cats;
-            const current = searchCategory.value;
-            searchCategory.innerHTML = '<option value="">All Categories</option>' +
-                cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
-            if (cats.includes(current)) searchCategory.value = current;
-        })
-        .catch(() => {
-            const current = searchCategory.value;
-            searchCategory.innerHTML = '<option value="">All Categories</option>' +
-                FALLBACK_CATEGORIES.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
-            if (FALLBACK_CATEGORIES.includes(current)) searchCategory.value = current;
-        });
+    state.categories = FALLBACK_CATEGORIES;
+    const currentCat = searchCategory.value;
+    searchCategory.innerHTML = '<option value="">All Categories</option>' +
+        FALLBACK_CATEGORIES.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+    if (FALLBACK_CATEGORIES.includes(currentCat)) searchCategory.value = currentCat;
 
-    api('/locations')
-        .then(locs => {
-            state.locations = locs;
-            const current = searchLocation.value;
-            searchLocation.innerHTML = '<option value="">All Locations</option>' +
-                locs.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
-            if (locs.includes(current)) searchLocation.value = current;
-        })
-        .catch(() => {
-            const current = searchLocation.value;
-            searchLocation.innerHTML = '<option value="">All Locations</option>' +
-                FALLBACK_LOCATIONS.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
-            if (FALLBACK_LOCATIONS.includes(current)) searchLocation.value = current;
-        });
+    state.locations = FALLBACK_LOCATIONS;
+    const currentLoc = searchLocation.value;
+    searchLocation.innerHTML = '<option value="">All Locations</option>' +
+        FALLBACK_LOCATIONS.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
+    if (FALLBACK_LOCATIONS.includes(currentLoc)) searchLocation.value = currentLoc;
 }
 
 /* ===== Farmers ===== */
@@ -334,34 +289,14 @@ function renderFarmers() {
 }
 
 function loadFarmers() {
-    api('/farmers')
-        .then(list => {
-            state.farmers = list;
-            renderFarmers();
-        })
-        .catch(() => {
-            state.farmers = FALLBACK_FARMERS;
-            renderFarmers();
-        });
+    state.farmers = FALLBACK_FARMERS;
+    renderFarmers();
 }
 
 /* ===== Stats ===== */
 function loadStats() {
-    api('/products')
-        .then(products => {
-            document.getElementById('statProducts').textContent = products.length.toLocaleString('en-NG');
-        })
-        .catch(() => {
-            document.getElementById('statProducts').textContent = FALLBACK_PRODUCTS.length.toLocaleString('en-NG');
-        });
-
-    api('/farmers')
-        .then(farmers => {
-            document.getElementById('statFarmers').textContent = farmers.length.toLocaleString('en-NG');
-        })
-        .catch(() => {
-            document.getElementById('statFarmers').textContent = FALLBACK_FARMERS.length.toLocaleString('en-NG');
-        });
+    document.getElementById('statProducts').textContent = FALLBACK_PRODUCTS.length.toLocaleString('en-NG');
+    document.getElementById('statFarmers').textContent = FALLBACK_FARMERS.length.toLocaleString('en-NG');
 }
 
 /* ===== Cart ===== */

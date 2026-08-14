@@ -1,0 +1,7 @@
+# Backend files (deployed as static-only demo on Vercel)
+node_modules
+server.js
+db.js
+data
+package.json
+package-lock.json
