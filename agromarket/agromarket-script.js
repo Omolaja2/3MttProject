@@ -166,8 +166,19 @@ const searchCategory = document.getElementById('searchCategory');
 const searchLocation = document.getElementById('searchLocation');
 const searchForm = document.getElementById('searchForm');
 
+function gridProducts() {
+    const my = JSON.parse(localStorage.getItem(DASH_STORAGE.products) || '[]');
+    const seen = new Set();
+    return my.concat(state.products).filter(p => {
+        if (seen.has(p.id)) return false;
+        seen.add(p.id);
+        return true;
+    });
+}
+
 function renderProducts() {
-    if (!state.products.length) {
+    const list = gridProducts();
+    if (!list.length) {
         productGrid.innerHTML = `
             <div class="empty-state">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -180,7 +191,7 @@ function renderProducts() {
         return;
     }
 
-    productGrid.innerHTML = state.products.map(productCard).join('');
+    productGrid.innerHTML = list.map(productCard).join('');
     initReveal();
 }
 
@@ -224,9 +235,16 @@ function loadProducts() {
         .then(data => {
             state.products = data;
             renderProducts();
+            if (dashboardView && !dashboardView.hidden && state.user) {
+                refreshDashboardData();
+            }
         })
-        .catch(err => {
-            productGrid.innerHTML = `<div class="empty-state"><h3>Could not load products</h3><p>${esc(err.message)}</p></div>`;
+        .catch(() => {
+            state.products = FALLBACK_PRODUCTS;
+            renderProducts();
+            if (dashboardView && !dashboardView.hidden && state.user) {
+                refreshDashboardData();
+            }
         })
         .finally(() => productGrid.classList.remove('loading'));
 }
@@ -352,7 +370,7 @@ function updateCartBadge() {
 }
 
 function addToCart(productId) {
-    const product = state.products.find(p => p.id === Number(productId));
+    const product = gridProducts().find(p => p.id === Number(productId));
     if (!product) return;
 
     const line = state.cart.find(i => i.product_id === product.id);
@@ -444,25 +462,29 @@ checkoutBtn.addEventListener('click', () => {
     }
 
     checkoutBtn.disabled = true;
-    api('/orders', {
-        method: 'POST',
-        body: JSON.stringify({
-            items: state.cart.map(i => ({ product_id: i.product_id, quantity: i.quantity }))
-        })
-    })
-        .then(res => {
-            state.cart = [];
-            saveCart();
-            updateCartBadge();
-            renderCart();
-            showToast(`Order #${res.id} placed — total ${money(res.total)}`);
-        })
-        .catch(err => {
-            showToast(err.message);
-        })
-        .finally(() => {
-            checkoutBtn.disabled = false;
-        });
+    const total = state.cart.reduce((sum, i) => sum + i.price * i.quantity, 0);
+    const orderId = Math.floor(1000 + Math.random() * 9000);
+    const placed = {
+        id: orderId,
+        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        status: 'processing',
+        total,
+        items: state.cart.map(i => ({ name: i.name, image: i.image, quantity: i.quantity, price: i.price }))
+    };
+
+    setTimeout(() => {
+        const orders = JSON.parse(localStorage.getItem(DASH_STORAGE.orders) || '[]');
+        orders.unshift(placed);
+        localStorage.setItem(DASH_STORAGE.orders, JSON.stringify(orders));
+
+        state.cart = [];
+        saveCart();
+        updateCartBadge();
+        renderCart();
+        closeModal('cartModal');
+        showToast(`Order #${orderId} placed — total ${money(total)} (demo)`);
+        checkoutBtn.disabled = false;
+    }, 700);
 });
 
 /* ===== Modals ===== */
@@ -502,8 +524,6 @@ document.addEventListener('keydown', (e) => {
 const authModal = document.getElementById('authModal');
 const loginForm = document.getElementById('loginForm');
 const registerForm = document.getElementById('registerForm');
-const loginSubmit = document.getElementById('loginSubmit');
-const registerSubmit = document.getElementById('registerSubmit');
 
 function setFormError(el, message) {
     if (message) {
@@ -550,47 +570,78 @@ function handleAuthSuccess(data) {
     setAuthUI();
     closeModal('authModal');
     showToast(`Welcome, ${data.user.name}!`);
+    showDashboard();
+}
+
+const DEMO_ACCOUNTS = {
+    buyer:  { id: 1,  name: 'Demo Buyer',  email: 'buyer@demo.com',  role: 'buyer',  location: 'Ibadan' },
+    farmer: { id: 2,  name: 'Demo Seller', email: 'seller@demo.com', role: 'farmer', location: 'Ibadan' }
+};
+
+function demoLogin(role) {
+    handleAuthSuccess({ token: 'demo-' + role, user: DEMO_ACCOUNTS[role] });
 }
 
 loginForm.addEventListener('submit', (e) => {
     e.preventDefault();
-    setFormError(document.getElementById('loginError'), '');
-    loginSubmit.disabled = true;
+    const email = document.getElementById('loginEmail').value.trim().toLowerCase();
+    const password = document.getElementById('loginPassword').value;
 
-    api('/login', {
-        method: 'POST',
-        body: JSON.stringify({
-            email: document.getElementById('loginEmail').value.trim(),
-            password: document.getElementById('loginPassword').value
-        })
-    })
-        .then(handleAuthSuccess)
-        .catch(err => setFormError(document.getElementById('loginError'), err.message))
-        .finally(() => { loginSubmit.disabled = false; });
+    setFormError(document.getElementById('loginError'), '');
+
+    if (email === 'buyer@demo.com' && password === 'demo') {
+        demoLogin('buyer');
+        return;
+    }
+    if (email === 'seller@demo.com' && password === 'demo') {
+        demoLogin('farmer');
+        return;
+    }
+
+    const matched = Object.values(DEMO_ACCOUNTS).find(a => a.email === email);
+    if (matched) {
+        setFormError(document.getElementById('loginError'), 'Wrong password. Demo password is "demo".');
+        return;
+    }
+
+    setFormError(document.getElementById('loginError'), 'Demo account not found. Use a demo button or register below.');
 });
 
 registerForm.addEventListener('submit', (e) => {
     e.preventDefault();
-    setFormError(document.getElementById('registerError'), '');
-    registerSubmit.disabled = true;
+    const name = document.getElementById('registerName').value.trim();
+    const email = document.getElementById('registerEmail').value.trim();
+    const password = document.getElementById('registerPassword').value;
+    const role = document.getElementById('registerRole').value;
 
-    api('/register', {
-        method: 'POST',
-        body: JSON.stringify({
-            name: document.getElementById('registerName').value.trim(),
-            email: document.getElementById('registerEmail').value.trim(),
-            password: document.getElementById('registerPassword').value,
-            role: document.getElementById('registerRole').value,
-            location: document.getElementById('registerLocation').value.trim() || null
-        })
-    })
-        .then(handleAuthSuccess)
-        .catch(err => setFormError(document.getElementById('registerError'), err.message))
-        .finally(() => { registerSubmit.disabled = false; });
+    setFormError(document.getElementById('registerError'), '');
+
+    if (!name || !email || !password) {
+        setFormError(document.getElementById('registerError'), 'Name, email and password are required.');
+        return;
+    }
+    if (password.length < 6) {
+        setFormError(document.getElementById('registerError'), 'Password must be at least 6 characters.');
+        return;
+    }
+
+    handleAuthSuccess({
+        token: 'demo-' + role + '-' + Date.now(),
+        user: {
+            id: 900 + Math.floor(Math.random() * 100),
+            name,
+            email,
+            role,
+            location: document.getElementById('registerLocation').value.trim() || 'Ibadan'
+        }
+    });
+});
+
+document.querySelectorAll('[data-demo]').forEach(btn => {
+    btn.addEventListener('click', () => demoLogin(btn.dataset.demo));
 });
 
 function logout() {
-    api('/logout', { method: 'POST' }).catch(() => {});
     localStorage.removeItem(STORAGE.token);
     localStorage.removeItem(STORAGE.user);
     state.user = null;
@@ -602,30 +653,27 @@ function setAuthUI() {
     const loggedIn = !!state.user;
     document.getElementById('loginBtn').hidden = loggedIn;
     document.getElementById('registerBtn').hidden = loggedIn;
-    document.getElementById('accountBtn').hidden = !loggedIn;
-    document.getElementById('logoutBtn').hidden = !loggedIn;
 
     document.getElementById('loginBtnMobile').hidden = loggedIn;
     document.getElementById('registerBtnMobile').hidden = loggedIn;
-    document.getElementById('accountBtnMobile').hidden = !loggedIn;
-    document.getElementById('logoutBtnMobile').hidden = !loggedIn;
 }
 
-document.getElementById('logoutBtn').addEventListener('click', logout);
-document.getElementById('logoutBtnMobile').addEventListener('click', logout);
+function switchAccount() {
+    localStorage.removeItem(STORAGE.token);
+    localStorage.removeItem(STORAGE.user);
+    state.user = null;
+    setAuthUI();
+    showMarket();
+    openAuthModal('login');
+}
 
-document.getElementById('accountBtn').addEventListener('click', () => {
-    showToast(`Signed in as ${state.user.name} (${state.user.role})`);
-});
-document.getElementById('accountBtnMobile').addEventListener('click', () => {
-    showToast(`Signed in as ${state.user.name} (${state.user.role})`);
-});
+document.getElementById('switchBtnPanel').addEventListener('click', switchAccount);
 
 /* ===== Product detail ===== */
 const detailModal = document.getElementById('detailModal');
 
 function openDetail(productId) {
-    const p = state.products.find(prod => prod.id === Number(productId));
+    const p = gridProducts().find(prod => prod.id === Number(productId));
     if (!p) return;
 
     const img = productImg(p.image);
@@ -704,6 +752,386 @@ function initReveal() {
     reveals.forEach(el => revealObserver.observe(el));
 }
 
+/* ===== Dashboard ===== */
+const dashboardView = document.getElementById('dashboardView');
+const landingView = document.getElementById('landingView');
+
+const DASH_STORAGE = {
+    orders: 'agromarket_orders',
+    products: 'agromarket_myproducts',
+    sales: 'agromarket_sales'
+};
+
+const FALLBACK_PRODUCTS = [
+    { id: 101, name: 'Fresh Tomatoes', category: 'Vegetables', price: 1500, unit: 'kg', location: 'Ibadan', stock: 40, image: 'tomato', rating: 4.8, rating_count: 214, farmer: { name: 'Mama Bola Farms' } },
+    { id: 102, name: 'Basmati Rice', category: 'Grains', price: 3500, unit: 'kg', location: 'Kano', stock: 25, image: 'rice', rating: 4.7, rating_count: 168, farmer: { name: 'Green Valley Farm' } },
+    { id: 103, name: 'White Yam', category: 'Tubers', price: 1200, unit: 'unit', location: 'Oyo', stock: 60, image: 'yam', rating: 4.6, rating_count: 132, farmer: { name: 'Omo Yams' } },
+    { id: 104, name: 'Scotch Bonnet Pepper', category: 'Vegetables', price: 800, unit: 'kg', location: 'Abeokuta', stock: 55, image: 'pepper', rating: 4.9, rating_count: 240, farmer: { name: 'Tasty Pepper Co' } },
+    { id: 105, name: 'Sweet Corn', category: 'Grains', price: 900, unit: 'unit', location: 'Osun', stock: 90, image: 'maize', rating: 4.5, rating_count: 98, farmer: { name: 'Farm Fresh Org' } },
+    { id: 106, name: 'Ripe Plantains', category: 'Fruits', price: 650, unit: 'unit', location: 'Ekiti', stock: 70, image: 'plantain', rating: 4.6, rating_count: 121, farmer: { name: 'Village Harvest' } },
+    { id: 107, name: 'Brown Beans', category: 'Legumes', price: 1100, unit: 'kg', location: 'Benin', stock: 45, image: 'beans', rating: 4.7, rating_count: 143, farmer: { name: 'Green Valley Farm' } },
+    { id: 108, name: 'Farm Eggs (crate)', category: 'Livestock', price: 2800, unit: 'crate', location: 'Ibadan', stock: 30, image: 'eggs', rating: 4.8, rating_count: 176, farmer: { name: 'Mama Bola Farms' } }
+];
+
+function marketProducts() {
+    return state.products.length ? state.products : FALLBACK_PRODUCTS;
+}
+
+function dashboardProducts() {
+    const my = JSON.parse(localStorage.getItem(DASH_STORAGE.products) || '[]');
+    return marketProducts().concat(my);
+}
+
+function dashboardOrders() {
+    let orders = JSON.parse(localStorage.getItem(DASH_STORAGE.orders) || '[]');
+    if (!orders.length && marketProducts().length) {
+        const src = marketProducts();
+        const pick = i => src[i % src.length];
+        const statuses = ['delivered', 'delivered', 'processing'];
+        orders = [
+            { id: 4821, date: 'Aug 12, 2026', status: statuses[0], total: 0, items: [pick(0), pick(2)].map(p => ({ name: p.name, image: p.image, quantity: 2, price: p.price })) },
+            { id: 4776, date: 'Aug 5, 2026', status: statuses[1], total: 0, items: [pick(1), pick(4)].map(p => ({ name: p.name, image: p.image, quantity: 1, price: p.price })) },
+            { id: 4710, date: 'Jul 28, 2026', status: statuses[2], total: 0, items: [pick(3), pick(5)].map(p => ({ name: p.name, image: p.image, quantity: 3, price: p.price })) }
+        ];
+        orders.forEach(o => {
+            o.total = o.items.reduce((s, i) => s + i.price * i.quantity, 0);
+        });
+        localStorage.setItem(DASH_STORAGE.orders, JSON.stringify(orders));
+    }
+    return orders;
+}
+
+function dashboardSales() {
+    let sales = JSON.parse(localStorage.getItem(DASH_STORAGE.sales) || '[]');
+    if (!sales.length && marketProducts().length) {
+        const src = marketProducts();
+        const names = ['Aisha O.', 'Tunde A.', 'Ngozi E.', 'Ibrahim S.', 'Chidi N.'];
+        const statuses = ['delivered', 'processing', 'pending', 'delivered', 'cancelled'];
+        sales = src.slice(0, 5).map((p, i) => ({
+            id: 3800 - i * 7,
+            buyer: names[i],
+            product: p.name,
+            image: p.image,
+            quantity: i + 2,
+            price: p.price,
+            total: p.price * (i + 2),
+            status: statuses[i],
+            date: `Aug ${14 - i}, 2026`
+        }));
+        localStorage.setItem(DASH_STORAGE.sales, JSON.stringify(sales));
+    }
+    return sales;
+}
+
+function imgClsFor(key) {
+    return productImg(key).cls;
+}
+
+function imgUseFor(key) {
+    return productImg(key).ill;
+}
+
+function initialsOf(name) {
+    return initials(name);
+}
+
+function setActivePanel(panel, opts = {}) {
+    document.querySelectorAll('.dash-nav-item').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.panel === panel);
+    });
+    document.querySelectorAll('.dash-panel').forEach(p => {
+        p.hidden = p.dataset.panel !== panel;
+    });
+    if (opts.scroll !== false) window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function statusChip(status) {
+    return `<span class="dash-status ${esc(status)}">${esc(status)}</span>`;
+}
+
+function renderBuyerOverview() {
+    const orders = dashboardOrders();
+    const src = marketProducts();
+    const totalSpent = orders.reduce((s, o) => s + o.total, 0);
+    const itemsBought = orders.reduce((s, o) => s + o.items.reduce((a, i) => a + i.quantity, 0), 0);
+
+    document.getElementById('statOrders').textContent = orders.length;
+    document.getElementById('statRevenue').textContent = money(totalSpent);
+    document.getElementById('statRevenueLabel').textContent = 'Total spent';
+    document.getElementById('statItems').textContent = itemsBought;
+    document.getElementById('statItemsLabel').textContent = 'Items bought';
+    document.getElementById('statRating').textContent = '★ 4.8';
+
+    const list = document.getElementById('overviewOrders');
+    if (!orders.length) {
+        list.innerHTML = '<p class="dash-empty">No orders yet.</p>';
+    } else {
+        list.innerHTML = orders.slice(0, 3).map(o => `
+            <div class="dash-list-item">
+                <span class="dash-list-img ${imgClsFor(o.items[0].image)}"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#${imgUseFor(o.items[0].image)}"/></svg></span>
+                <div class="dash-list-info">
+                    <strong>Order #${o.id}</strong>
+                    <small>${esc(o.date)} &middot; ${o.items.length} item(s)</small>
+                </div>
+                <span class="dash-list-price">${money(o.total)}</span>
+            </div>`).join('');
+    }
+
+    const top = src.slice(0, 4);
+    document.getElementById('overviewProducts').innerHTML = top.length ? top.map(p => `
+        <div class="dash-list-item">
+            <span class="dash-list-img ${imgClsFor(p.image)}"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#${imgUseFor(p.image)}"/></svg></span>
+            <div class="dash-list-info">
+                <strong>${esc(p.name)}</strong>
+                <small>${esc(p.category)}</small>
+            </div>
+            <span class="dash-list-price">${money(p.price)}</span>
+        </div>`).join('') : '<p class="dash-empty">Loading marketplace data…</p>';
+}
+
+function renderSellerOverview() {
+    const products = dashboardProducts();
+    const sales = dashboardSales();
+    const revenue = sales.reduce((s, x) => s + x.total, 0);
+    const unitsSold = sales.reduce((s, x) => s + x.quantity, 0);
+
+    document.getElementById('statOrders').textContent = sales.length;
+    document.getElementById('statRevenue').textContent = money(revenue);
+    document.getElementById('statRevenueLabel').textContent = 'Total revenue';
+    document.getElementById('statItems').textContent = unitsSold;
+    document.getElementById('statItemsLabel').textContent = 'Units sold';
+    document.getElementById('statRating').textContent = '★ 4.7';
+
+    const list = document.getElementById('overviewOrders');
+    list.innerHTML = sales.length ? sales.slice(0, 3).map(s => `
+        <div class="dash-list-item">
+            <span class="dash-list-img ${imgClsFor(s.image)}"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#${imgUseFor(s.image)}"/></svg></span>
+            <div class="dash-list-info">
+                <strong>${esc(s.product)}</strong>
+                <small>${esc(s.buyer)} &middot; ${esc(s.date)}</small>
+            </div>
+            ${statusChip(s.status)}
+        </div>`).join('') : '<p class="dash-empty">No sales yet.</p>';
+
+    const top = products.slice(0, 4);
+    document.getElementById('overviewProducts').innerHTML = top.length ? top.map(p => `
+        <div class="dash-list-item">
+            <span class="dash-list-img ${imgClsFor(p.image)}"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#${imgUseFor(p.image)}"/></svg></span>
+            <div class="dash-list-info">
+                <strong>${esc(p.name)}</strong>
+                <small>${p.stock} in stock</small>
+            </div>
+            <span class="dash-list-price">${money(p.price)}</span>
+        </div>`).join('') : '<p class="dash-empty">Loading marketplace data…</p>';
+}
+
+function renderOverview() {
+    document.getElementById('dashGreetingName').textContent = (state.user.name || 'Demo').split(' ')[0];
+    if (state.user.role === 'farmer') {
+        document.getElementById('dashGreetingSub').textContent = 'Here\'s your store performance at a glance.';
+        document.getElementById('dashActionLabel').textContent = 'Add Product';
+        renderSellerOverview();
+    } else {
+        document.getElementById('dashGreetingSub').textContent = 'Here\'s what\'s happening on AgroMarket today.';
+        document.getElementById('dashActionLabel').textContent = 'Browse Market';
+        renderBuyerOverview();
+    }
+    setActivePanel('overview');
+}
+
+function renderBuyerOrders() {
+    const orders = dashboardOrders();
+    const list = document.getElementById('buyerOrders');
+    if (!orders.length) {
+        list.innerHTML = '<p class="dash-empty">You haven\'t placed any orders yet.</p>';
+        return;
+    }
+    list.innerHTML = orders.map(o => `
+        <div class="order-item">
+            <div class="order-top">
+                <strong>Order #${o.id}</strong>
+                <small>${esc(o.date)}</small>
+                ${statusChip(o.status)}
+            </div>
+            <div class="order-items">
+                ${o.items.map(i => `
+                    <div class="order-line">
+                        <span>${esc(i.name)}</span>
+                        <span class="qty">${i.quantity} &times; ${money(i.price)}</span>
+                    </div>`).join('')}
+            </div>
+            <div class="order-total"><span>Total</span><strong>${money(o.total)}</strong></div>
+        </div>`).join('');
+}
+
+function stockPill(stock) {
+    if (stock <= 0) return '<span class="pill out-stock">Out of stock</span>';
+    if (stock <= 10) return '<span class="pill low-stock">Low stock</span>';
+    return '<span class="pill in-stock">In stock</span>';
+}
+
+function renderSellerProducts() {
+    const products = dashboardProducts();
+    const tbody = document.getElementById('sellerProductsTable');
+    if (!products.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="dash-empty">No products yet. Add your first product!</td></tr>';
+        return;
+    }
+    tbody.innerHTML = products.map(p => `
+        <tr>
+            <td><span class="prod-cell"><span class="dash-list-img ${imgClsFor(p.image)}"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#${imgUseFor(p.image)}"/></svg></span><strong>${esc(p.name)}</strong></span></td>
+            <td>${esc(p.category || 'General')}</td>
+            <td>${money(p.price)} / ${esc(p.unit || 'unit')}</td>
+            <td>${esc(p.stock)}</td>
+            <td>★ ${Number(p.rating || 4.5).toFixed(1)}</td>
+            <td>${stockPill(p.stock)}</td>
+        </tr>`).join('');
+}
+
+function renderSellerSales() {
+    const sales = dashboardSales();
+    const list = document.getElementById('sellerSales');
+    if (!sales.length) {
+        list.innerHTML = '<p class="dash-empty">No sales yet.</p>';
+        return;
+    }
+    list.innerHTML = sales.map(s => `
+        <div class="order-item">
+            <div class="order-top">
+                <strong>${esc(s.product)}</strong>
+                <small>${esc(s.buyer)} &middot; ${esc(s.date)}</small>
+                ${statusChip(s.status)}
+            </div>
+            <div class="order-total"><span>${s.quantity} sold</span><strong>${money(s.total)}</strong></div>
+        </div>`).join('');
+}
+
+function renderAccount() {
+    const u = state.user;
+    document.getElementById('dashAvatar').textContent = initialsOf(u.name);
+    document.getElementById('dashName').textContent = u.name;
+    document.getElementById('dashRole').textContent = u.role === 'farmer' ? 'Seller' : 'Buyer';
+    document.getElementById('accountRows').innerHTML = `
+        <div class="account-row"><span>Full name</span><strong>${esc(u.name)}</strong></div>
+        <div class="account-row"><span>Email</span><strong>${esc(u.email || '—')}</strong></div>
+        <div class="account-row"><span>Role</span><strong>${esc(u.role === 'farmer' ? 'Seller (farmer)' : 'Buyer')}</strong></div>
+        <div class="account-row"><span>Location</span><strong>${esc(u.location || 'Ibadan')}</strong></div>
+        <div class="account-row"><span>Account</span><strong>Demo account</strong></div>`;
+}
+
+function renderDashboard() {
+    if (!state.user) return;
+    const isFarmer = state.user.role === 'farmer';
+    document.getElementById('sellerProductsNav').hidden = !isFarmer;
+    document.getElementById('sellerSalesNav').hidden = !isFarmer;
+    document.getElementById('buyerOrdersNav').hidden = isFarmer;
+
+    renderAccount();
+    renderOverview();
+    setActivePanel('overview');
+}
+
+function refreshDashboardData() {
+    if (!state.user || dashboardView.hidden) return;
+    dashboardOrders();
+    dashboardSales();
+    const active = document.querySelector('.dash-nav-item.active');
+    const panel = active ? active.dataset.panel : 'overview';
+    if (panel === 'overview') renderOverview();
+    if (panel === 'orders') renderBuyerOrders();
+    if (panel === 'products') renderSellerProducts();
+    if (panel === 'sales') renderSellerSales();
+    if (panel === 'account') renderAccount();
+}
+
+function showDashboard() {
+    landingView.hidden = true;
+    dashboardView.hidden = false;
+    document.body.classList.add('dash-mode');
+    closeModal('authModal');
+    renderDashboard();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function showMarket() {
+    dashboardView.hidden = true;
+    landingView.hidden = false;
+    document.body.classList.remove('dash-mode');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+document.querySelectorAll('.dash-nav-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const panel = btn.dataset.panel;
+        setActivePanel(panel);
+        if (panel === 'orders') renderBuyerOrders();
+        if (panel === 'products') renderSellerProducts();
+        if (panel === 'sales') renderSellerSales();
+        if (panel === 'account') renderAccount();
+    });
+});
+
+document.querySelectorAll('.dash-link').forEach(el => {
+    el.addEventListener('click', () => {
+        setActivePanel(el.dataset.panel);
+    });
+});
+
+document.querySelectorAll('.dash-back').forEach(btn => {
+    btn.addEventListener('click', showMarket);
+});
+
+document.getElementById('dashActionBtn').addEventListener('click', () => {
+    if (state.user.role === 'farmer') {
+        setActivePanel('products', { scroll: false });
+        openAddProduct();
+    } else {
+        showMarket();
+    }
+});
+
+const addProductCard = document.getElementById('addProductCard');
+const addProductForm = document.getElementById('addProductForm');
+
+function openAddProduct() {
+    addProductCard.hidden = false;
+    document.getElementById('apName').focus();
+    if (addProductCard.scrollIntoView) {
+        addProductCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+
+document.getElementById('openAddProduct').addEventListener('click', openAddProduct);
+document.getElementById('closeAddProduct').addEventListener('click', () => {
+    addProductCard.hidden = true;
+});
+
+addProductForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const products = JSON.parse(localStorage.getItem(DASH_STORAGE.products) || '[]');
+    products.unshift({
+        id: 900 + Date.now() % 1000,
+        name: document.getElementById('apName').value.trim(),
+        category: document.getElementById('apCategory').value,
+        price: Number(document.getElementById('apPrice').value),
+        unit: document.getElementById('apUnit').value.trim() || 'unit',
+        stock: Number(document.getElementById('apStock').value),
+        image: document.getElementById('apImage').value,
+        description: document.getElementById('apDesc').value.trim(),
+        rating: 5,
+        rating_count: 0,
+        location: state.user.location || 'Ibadan',
+        farmer: { name: state.user.name }
+    });
+    localStorage.setItem(DASH_STORAGE.products, JSON.stringify(products));
+    addProductForm.reset();
+    addProductCard.hidden = true;
+    renderSellerProducts();
+    renderSellerOverview();
+    renderProducts();
+    showToast('Product published successfully!');
+});
+
 /* ===== Init ===== */
 setAuthUI();
 updateCartBadge();
@@ -712,3 +1140,7 @@ loadProducts();
 loadFilters();
 loadFarmers();
 loadStats();
+
+if (state.user) {
+    showDashboard();
+}
