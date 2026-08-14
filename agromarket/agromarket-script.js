@@ -240,7 +240,7 @@ function loadProducts() {
             }
         })
         .catch(() => {
-            state.products = FALLBACK_PRODUCTS;
+            state.products = applyLocalFilter(FALLBACK_PRODUCTS);
             renderProducts();
             if (dashboardView && !dashboardView.hidden && state.user) {
                 refreshDashboardData();
@@ -287,7 +287,12 @@ function loadFilters() {
                 cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
             if (cats.includes(current)) searchCategory.value = current;
         })
-        .catch(() => {});
+        .catch(() => {
+            const current = searchCategory.value;
+            searchCategory.innerHTML = '<option value="">All Categories</option>' +
+                FALLBACK_CATEGORIES.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+            if (FALLBACK_CATEGORIES.includes(current)) searchCategory.value = current;
+        });
 
     api('/locations')
         .then(locs => {
@@ -297,7 +302,12 @@ function loadFilters() {
                 locs.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
             if (locs.includes(current)) searchLocation.value = current;
         })
-        .catch(() => {});
+        .catch(() => {
+            const current = searchLocation.value;
+            searchLocation.innerHTML = '<option value="">All Locations</option>' +
+                FALLBACK_LOCATIONS.map(l => `<option value="${esc(l)}">${esc(l)}</option>`).join('');
+            if (FALLBACK_LOCATIONS.includes(current)) searchLocation.value = current;
+        });
 }
 
 /* ===== Farmers ===== */
@@ -329,7 +339,10 @@ function loadFarmers() {
             state.farmers = list;
             renderFarmers();
         })
-        .catch(() => {});
+        .catch(() => {
+            state.farmers = FALLBACK_FARMERS;
+            renderFarmers();
+        });
 }
 
 /* ===== Stats ===== */
@@ -338,13 +351,17 @@ function loadStats() {
         .then(products => {
             document.getElementById('statProducts').textContent = products.length.toLocaleString('en-NG');
         })
-        .catch(() => {});
+        .catch(() => {
+            document.getElementById('statProducts').textContent = FALLBACK_PRODUCTS.length.toLocaleString('en-NG');
+        });
 
     api('/farmers')
         .then(farmers => {
             document.getElementById('statFarmers').textContent = farmers.length.toLocaleString('en-NG');
         })
-        .catch(() => {});
+        .catch(() => {
+            document.getElementById('statFarmers').textContent = FALLBACK_FARMERS.length.toLocaleString('en-NG');
+        });
 }
 
 /* ===== Cart ===== */
@@ -772,6 +789,30 @@ const FALLBACK_PRODUCTS = [
     { id: 107, name: 'Brown Beans', category: 'Legumes', price: 1100, unit: 'kg', location: 'Benin', stock: 45, image: 'beans', rating: 4.7, rating_count: 143, farmer: { name: 'Green Valley Farm' } },
     { id: 108, name: 'Farm Eggs (crate)', category: 'Livestock', price: 2800, unit: 'crate', location: 'Ibadan', stock: 30, image: 'eggs', rating: 4.8, rating_count: 176, farmer: { name: 'Mama Bola Farms' } }
 ];
+
+const FALLBACK_CATEGORIES = [...new Set(FALLBACK_PRODUCTS.map(p => p.category))];
+const FALLBACK_LOCATIONS = [...new Set(FALLBACK_PRODUCTS.map(p => p.location))];
+
+const FALLBACK_FARMERS = [
+    { name: 'Mama Bola Farms', location: 'Ibadan', avg_rating: 4.8, products: ['Fresh Tomatoes', 'Farm Eggs (crate)'] },
+    { name: 'Green Valley Farm', location: 'Kano', avg_rating: 4.7, products: ['Basmati Rice', 'Brown Beans'] },
+    { name: 'Omo Yams', location: 'Oyo', avg_rating: 4.6, products: ['White Yam'] },
+    { name: 'Tasty Pepper Co', location: 'Abeokuta', avg_rating: 4.9, products: ['Scotch Bonnet Pepper'] },
+    { name: 'Farm Fresh Org', location: 'Osun', avg_rating: 4.5, products: ['Sweet Corn'] },
+    { name: 'Village Harvest', location: 'Ekiti', avg_rating: 4.6, products: ['Ripe Plantains'] }
+];
+
+function applyLocalFilter(list) {
+    const q = (state.filter.search || '').toLowerCase().trim();
+    return list.filter(p => {
+        if (state.filter.category && p.category !== state.filter.category) return false;
+        if (state.filter.location && p.location !== state.filter.location) return false;
+        if (q && !(p.name.toLowerCase().includes(q) ||
+                  p.category.toLowerCase().includes(q) ||
+                  (p.farmer && p.farmer.name || '').toLowerCase().includes(q))) return false;
+        return true;
+    });
+}
 
 function marketProducts() {
     return state.products.length ? state.products : FALLBACK_PRODUCTS;
